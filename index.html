@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="robots" content="noindex,nofollow">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Pérou">
+<meta name="theme-color" content="#f7efe3">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" href="icons/icon-192.png">
+<title>Pérou</title>
+<style>
+:root{color-scheme:light}
+html,body{height:100%;margin:0;background:#f7efe3;color:#2a1c14;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-tap-highlight-color:transparent}
+.lock{min-height:100%;box-sizing:border-box;display:grid;place-content:center;justify-items:center;gap:18px;padding:calc(24px + env(safe-area-inset-top,0px)) 24px calc(24px + env(safe-area-inset-bottom,0px));text-align:center}
+.lock img{width:88px;height:88px;border-radius:20px;box-shadow:0 10px 30px rgba(42,28,20,.25)}
+h1{margin:0;font-family:"Iowan Old Style",Palatino,Georgia,serif;font-size:28px;font-weight:700;letter-spacing:.01em}
+p{margin:0;color:#8a7563;font-size:14px;line-height:1.45;max-width:280px}
+form{display:grid;gap:10px;width:min(300px,82vw);margin-top:4px}
+input{font:inherit;font-size:17px;color:#2a1c14;background:#fffaf2;border:1px solid #e4d4bd;border-radius:12px;padding:13px 14px;outline:none;text-align:center}
+input:focus{border-color:#e9b949}
+button{font:inherit;font-size:16px;font-weight:600;color:#fff;background:#c8442f;border:0;border-radius:12px;padding:13px;cursor:pointer}
+button[disabled]{opacity:.6}
+.err{min-height:20px;color:#c4302f;font-size:13px}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<main class="lock" id="lock" hidden>
+  <img src="icons/icon-192.png" alt="">
+  <h1>Accès réservé</h1>
+  <p>Entrez le mot de passe partagé pour suivre le voyage de Frank &amp; Sabine. Il ne sera demandé qu'une fois sur ce téléphone.</p>
+  <form id="f" autocomplete="on">
+    <input id="pw" type="password" name="password" autocomplete="current-password" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="Mot de passe" required>
+    <button id="go" type="submit">Ouvrir</button>
+    <div class="err" id="err" role="alert"></div>
+  </form>
+</main>
+<script>
+(() => {
+const C = {"salt": "wIC0SSRS07JRTOHFB1xNOw==", "iter": 400000};
+const u8 = b => Uint8Array.from(atob(b), c => c.charCodeAt(0));
+const b64 = a => btoa(String.fromCharCode(...new Uint8Array(a)));
+const $ = id => document.getElementById(id);
+const L = {"k1": "pe-key", "f1": "app.enc"};
+const LS = { get(k){ try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v){ try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch (e) {} } };
+async function open_(file, key, storeAs){
+  const r = await fetch(file, {cache: "no-cache"}).catch(() => fetch(file));
+  if (!r.ok) throw new Error("réseau");
+  const buf = await r.arrayBuffer();
+  const plain = await crypto.subtle.decrypt({name: "AES-GCM", iv: new Uint8Array(buf, 0, 12)}, key, new Uint8Array(buf, 12));
+  if (storeAs) LS.set(storeAs, b64(await crypto.subtle.exportKey("raw", key)));
+  const html = new TextDecoder().decode(plain);
+  document.open(); document.write(html); document.close();
+}
+const imp = s => crypto.subtle.importKey("raw", u8(s), "AES-GCM", true, ["decrypt"]);
+function showLock(msg){ $("lock").hidden = false; $("err").textContent = msg || ""; }
+(async () => {
+  if (!window.crypto || !crypto.subtle) return showLock("Ouvrez ce lien dans Safari (https).");
+  const k1 = LS.get(L.k1), k2 = L.k2 ? LS.get(L.k2) : null, suivi = L.k2 && null === "suivi";
+  try {
+    if (k1 && !(suivi && k2)) return await open_(L.f1, await imp(k1));
+    if (k2) return await open_(L.f2, await imp(k2));
+  } catch (e) {
+    if (e.name === "OperationError") { LS.set(k1 && !(suivi && k2) ? L.k1 : L.k2, null);  return showLock("Le mot de passe a changé : entrez le nouveau."); }
+    return showLock("Connexion impossible pour l'instant. Réessayez avec du réseau.");
+  }
+  showLock();
+})();
+async function derive(pw, c){
+  const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(pw), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey({name: "PBKDF2", salt: u8(c.salt), iterations: c.iter, hash: "SHA-256"}, base, {name: "AES-GCM", length: 256}, true, ["decrypt"]);
+}
+$("f").addEventListener("submit", async e => {
+  e.preventDefault();
+  const pw = $("pw").value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[\s\-_.]/g, "");
+  if (!pw) return;
+  $("go").disabled = true; $("err").textContent = "";
+  try {
+    try { await open_(L.f1, await derive(pw, C), L.k1);  }
+    catch (err) {
+      if (err.name !== "OperationError" || !L.c2) throw err;
+      await open_(L.f2, await derive(pw, L.c2), L.k2);   // mot de passe des proches
+    }
+  } catch (err) {
+    $("go").disabled = false;
+    $("err").textContent = err.name === "OperationError" ? "Mot de passe incorrect." : "Connexion impossible pour l'instant.";
+    $("pw").select();
+  }
+});
+})();
+</script>
+</body>
+</html>
